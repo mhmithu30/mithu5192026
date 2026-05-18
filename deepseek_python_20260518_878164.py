@@ -8,8 +8,8 @@ import json
 from datetime import datetime
 
 # ================== কনফিগারেশন ==================
-BOT_TOKEN = os.environ.get("BOT_TOKEN", "YOUR_BOT_TOKEN_HERE")
-CHAT_ID = os.environ.get("CHAT_ID", "YOUR_CHAT_ID_HERE")
+BOT_TOKEN = os.environ.get("BOT_TOKEN", "8760185059:AAElry-u0BYW6ZLiejygJ1UYHcPGMy_vq9s")
+CHAT_ID = os.environ.get("CHAT_ID", "6881373105")
 MIN_POINTS = 400  # শুধু ৪০০+ পয়েন্ট দেখাবে
 
 APUCASH_URL = "https://apucash.com"
