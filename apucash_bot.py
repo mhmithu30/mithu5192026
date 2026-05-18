@@ -9,7 +9,7 @@ from datetime import datetime
 import random
 
 # ================== কনফিগারেশন ==================
-BOT_TOKEN = os.environ.get("BOT_TOKEN", "8760185059:AAElry-u0BYW6ZLiejygJ1UYHcPGMy_vq9s")
+BOT_TOKEN = os.environ.get("BOT_TOKEN", "8617551433:AAFK1waCKiLv72SErBuf4iK0sduSahJONZo")
 CHAT_ID = os.environ.get("CHAT_ID", "6881373105")
 MIN_POINTS = 400
 
@@ -17,29 +17,27 @@ APUCASH_URL = "https://apucash.com"
 SEEN_FILE = "apucash_seen.json"
 CHECK_INTERVAL = 60
 
-USER_AGENTS = [
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/119.0.0.0 Safari/537.36",
-]
-
 def send_telegram(message):
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
     data = {"chat_id": CHAT_ID, "text": message, "parse_mode": "HTML"}
     try:
         r = requests.post(url, data=data, timeout=10)
+        if r.status_code == 200:
+            print(f"✅ Telegram sent")
         return r.status_code == 200
     except Exception as e:
-        print(f"Telegram error: {e}")
+        print(f"❌ Telegram error: {e}")
         return False
 
 def scrape_apucash():
+    """ApuCash থেকে সঠিক ডাটা সংগ্রহ"""
     print(f"[{datetime.now().strftime('%H:%M:%S')}] 🔍 Checking ApuCash...")
     
     headers = {
-        "User-Agent": random.choice(USER_AGENTS),
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36",
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
         "Accept-Language": "en-US,en;q=0.9",
-        "Connection": "keep-alive",
+        "Cache-Control": "no-cache",
     }
     
     try:
@@ -52,139 +50,134 @@ def scrape_apucash():
         soup = BeautifulSoup(response.text, "html.parser")
         offers = []
         
-        # পদ্ধতি 1: HTML এলিমেন্ট থেকে সরাসরি ইউজারনেম ও পয়েন্টস বের করা
-        # ApuCash এ সাধারণত activity ফিড থাকে
+        # ডিবাগ: HTML এর অংশ দেখি
+        print("  Debug: Looking for activity patterns...")
         
-        # সব activity items খোঁজা
-        activity_items = soup.find_all("div", class_=re.compile(r"activity|feed|item", re.I))
-        
-        if not activity_items:
-            # যদি না পায়, সব div চেক করা
-            activity_items = soup.find_all("div")
-        
-        for item in activity_items:
+        # পদ্ধতি 1: JSON-LD স্ক্রিপ্ট খোঁজা (সবচেয়ে নির্ভরযোগ্য)
+        scripts = soup.find_all("script", type="application/ld+json")
+        for script in scripts:
             try:
-                item_text = item.get_text()
-                
-                # পয়েন্টস খোঁজা (বিভিন্ন ফরম্যাট)
-                points_match = re.search(r'(\d+(?:\.\d+)?)\s*(?:points?|pts?|coins?)', item_text, re.I)
-                if not points_match:
-                    points_match = re.search(r'[\$](\d+(?:\.\d+)?)', item_text)
-                
-                if points_match:
-                    points_val = float(points_match.group(1))
-                    
-                    if points_val >= MIN_POINTS:
-                        # ইউজারনেম খোঁজা - সঠিকভাবে
-                        username = None
-                        
-                        # পদ্ধতি A: @username ফরম্যাট
-                        at_match = re.search(r'@([A-Za-z0-9_]{3,25})', item_text)
-                        if at_match:
-                            username = at_match.group(1)
-                        
-                        # পদ্ধতি B: "username earned" প্যাটার্ন
-                        if not username:
-                            earned_match = re.search(r'([A-Za-z][A-Za-z0-9_]{2,20})\s+(?:earned|got|received|completed)', item_text, re.I)
-                            if earned_match:
-                                username = earned_match.group(1)
-                        
-                        # পদ্ধতি C: "by username" প্যাটার্ন
-                        if not username:
-                            by_match = re.search(r'(?:by|from)\s+([A-Za-z][A-Za-z0-9_]{2,20})', item_text, re.I)
-                            if by_match:
-                                username = by_match.group(1)
-                        
-                        # পদ্ধতি D: HTML এ username class থাকলে
-                        if not username:
-                            user_elem = item.find(class_=re.compile(r"user|username|name", re.I))
-                            if user_elem:
-                                username = user_elem.get_text(strip=True)
-                        
-                        # পদ্ধতি E: link টেক্সট থেকে
-                        if not username:
-                            link = item.find("a")
-                            if link:
-                                link_text = link.get_text(strip=True)
-                                if len(link_text) > 2 and not link_text.isdigit():
-                                    username = link_text
-                        
-                        # পদ্ধতি F: সাধারণ টেক্সট থেকে প্রথম শব্দ (যেটা নাম হতে পারে)
-                        if not username:
-                            words = item_text.split()
-                            for word in words[:5]:
-                                if len(word) > 2 and word.isalpha() and not word.isdigit():
-                                    username = word
-                                    break
-                        
-                        # যদি এখনও ইউজারনেম না পাওয়া যায়, স্কিপ করুন
-                        if username and len(username) > 2 and not username.isdigit():
-                            unique_key = hashlib.md5(f"{username}_{points_val}".encode()).hexdigest()
-                            
-                            offers.append({
-                                "username": username[:30],
-                                "points": f"{points_val} points",
-                                "points_val": points_val,
-                                "key": unique_key,
-                                "time": datetime.now().strftime("%H:%M:%S")
-                            })
-                            print(f"  ✅ {username} - {points_val} points")
-                            
-            except Exception as e:
+                import json as json_module
+                data = json_module.loads(script.string)
+                if isinstance(data, dict):
+                    # এখানে ডাটা পার্স করুন
+                    pass
+            except:
+                pass
+        
+        # পদ্ধতি 2: meta ট্যাগ থেকে
+        meta_tags = soup.find_all("meta")
+        for meta in meta_tags:
+            if meta.get("property") and "activity" in meta.get("property", "").lower():
+                print(f"  Meta found: {meta}")
+        
+        # পদ্ধতি 3: সব div এর inner text বিশ্লেষণ
+        all_divs = soup.find_all("div")
+        
+        for div in all_divs:
+            div_html = str(div)
+            div_text = div.get_text()
+            
+            # শুধু মিনিমাম লেন্থের div বিবেচনা করুন
+            if len(div_text) < 20 or len(div_text) > 500:
                 continue
+            
+            # পয়েন্টস প্যাটার্ন (একাধিক ফরম্যাট)
+            points_patterns = [
+                r'(\d+(?:\.\d+)?)\s*(?:points?|pts?|coins?|credits?)',
+                r'[\$€£](\d+(?:\.\d+)?)',
+                r'reward[:\s]+(\d+)',
+                r'earned\s+(\d+)',
+            ]
+            
+            points_val = 0
+            points_str = None
+            
+            for pattern in points_patterns:
+                match = re.search(pattern, div_text, re.I)
+                if match:
+                    points_val = float(match.group(1))
+                    points_str = match.group(0)
+                    break
+            
+            if points_val >= MIN_POINTS:
+                # ইউজারনেম প্যাটার্ন (একাধিক ফরম্যাট)
+                username_patterns = [
+                    r'@([A-Za-z0-9_]{3,25})',
+                    r'user[:\s]+([A-Za-z0-9_]{3,25})',
+                    r'username[:\s]+([A-Za-z0-9_]{3,25})',
+                    r'by\s+([A-Za-z][A-Za-z0-9_]{2,20})',
+                    r'([A-Za-z][A-Za-z0-9_]{2,20})\s+(?:completed|earned|got)',
+                    r'([A-Za-z][A-Za-z0-9_]{3,20})',
+                ]
+                
+                username = None
+                for pattern in username_patterns:
+                    match = re.search(pattern, div_text, re.I)
+                    if match:
+                        potential_name = match.group(1)
+                        # চেক করুন এটি শুধু নম্বর কিনা
+                        if not potential_name.isdigit() and len(potential_name) > 2:
+                            username = potential_name
+                            break
+                
+                if username and points_val >= MIN_POINTS:
+                    # অফার নেম খোঁজার চেষ্টা
+                    offer_name = "Unknown Offer"
+                    offer_patterns = [
+                        r'(?:completed|finished)\s+([A-Za-z\s]{5,50})',
+                        r'offer[:\s]+([A-Za-z\s]{5,50})',
+                    ]
+                    for pattern in offer_patterns:
+                        match = re.search(pattern, div_text, re.I)
+                        if match:
+                            offer_name = match.group(1).strip()[:40]
+                            break
+                    
+                    unique_key = hashlib.md5(f"{username}_{points_val}_{offer_name}".encode()).hexdigest()
+                    
+                    offers.append({
+                        "username": username,
+                        "points": f"{int(points_val)} points",
+                        "points_val": points_val,
+                        "offer_name": offer_name,
+                        "key": unique_key,
+                        "time": datetime.now().strftime("%I:%M %p")
+                    })
+                    print(f"  ✅ {username} - {int(points_val)} points - {offer_name[:20]}")
         
-        # পদ্ধতি 2: পুরো HTML টেক্সট থেকে উন্নত Regex
-        text = response.text
-        
-        # আরো স্পেসিফিক প্যাটার্ন শুধু valid ইউজারনেমের জন্য
-        patterns = [
-            # @username earned X points
-            r'@([A-Za-z][A-Za-z0-9_]{2,20})\s+(?:earned|got|received)\s+(\d+(?:\.\d+)?)\s+(?:points?|coins?)',
-            
-            # username (alphabetical) followed by points
-            r'([A-Za-z][A-Za-z0-9_]{3,20})\s+(?:earned|got|received|won)\s+(\d+(?:\.\d+)?)',
-            
-            # Completed by username for X points
-            r'(?:completed|finished)\s+(?:by|from)\s+([A-Za-z][A-Za-z0-9_]{3,20})\s+(?:for|got)\s+(\d+(?:\.\d+)?)',
-            
-            # X points to username
-            r'(\d+(?:\.\d+)?)\s+(?:points?|coins?)\s+(?:to|for)\s+([A-Za-z][A-Za-z0-9_]{3,20})',
+        # পদ্ধতি 4: API endpoint (যদি থাকে)
+        api_endpoints = [
+            "https://apucash.com/api/activities",
+            "https://apucash.com/api/earnings",
+            "https://apucash.com/feed.json",
         ]
         
-        for pattern in patterns:
-            matches = re.findall(pattern, text, re.I)
-            for match in matches:
-                try:
-                    if len(match) == 2:
-                        # চেক করুন কোনটা ইউজারনেম আর কোনটা পয়েন্টস
-                        if match[0].replace('.', '').isdigit():
-                            points_val = float(match[0])
-                            username = match[1]
-                        elif match[1].replace('.', '').isdigit():
-                            points_val = float(match[1])
-                            username = match[0]
-                        else:
-                            # যদি দুইটাই নম্বর না হয়, ধরুন প্রথমটা ইউজারনেম
-                            if not match[0].isdigit() and len(match[0]) > 2:
-                                username = match[0]
-                                points_val = float(match[1]) if match[1].replace('.', '').isdigit() else 0
-                            else:
-                                continue
-                        
-                        if points_val >= MIN_POINTS and username and len(username) > 2 and not username.isdigit():
-                            unique_key = hashlib.md5(f"{username}_{points_val}".encode()).hexdigest()
-                            
-                            if not any(o['key'] == unique_key for o in offers):
-                                offers.append({
-                                    "username": username[:30],
-                                    "points": f"{points_val} points",
-                                    "points_val": points_val,
-                                    "key": unique_key,
-                                    "time": datetime.now().strftime("%H:%M:%S")
-                                })
-                                print(f"  ✅ Regex: {username} - {points_val} points")
-                except:
-                    continue
+        for api_url in api_endpoints:
+            try:
+                api_response = requests.get(api_url, headers=headers, timeout=10)
+                if api_response.status_code == 200:
+                    try:
+                        api_data = api_response.json()
+                        if isinstance(api_data, list):
+                            for item in api_data:
+                                username = item.get("user", {}).get("username", item.get("username"))
+                                points_val = item.get("points", item.get("reward", 0))
+                                if username and points_val >= MIN_POINTS:
+                                    unique_key = hashlib.md5(f"{username}_{points_val}".encode()).hexdigest()
+                                    offers.append({
+                                        "username": username,
+                                        "points": f"{points_val} points",
+                                        "points_val": points_val,
+                                        "offer_name": item.get("offer", "Unknown"),
+                                        "key": unique_key,
+                                        "time": datetime.now().strftime("%I:%M %p")
+                                    })
+                                    print(f"  ✅ API: {username} - {points_val} points")
+                    except:
+                        pass
+            except:
+                pass
         
         # ডুপ্লিকেট রিমুভ
         unique_offers = []
@@ -194,21 +187,23 @@ def scrape_apucash():
                 seen_keys.add(offer['key'])
                 unique_offers.append(offer)
         
-        print(f"📊 Total valid offers: {len(unique_offers)}")
+        print(f"📊 Total offers found: {len(unique_offers)}")
         return unique_offers
         
     except Exception as e:
-        print(f"❌ Error: {e}")
+        print(f"❌ Scraping error: {e}")
         return []
 
 def main():
     print("="*60)
-    print("🤖 ApuCash Live Offer Notifier")
+    print("🤖 ApuCash Live Offer Notifier (Updated)")
     print(f"💰 Minimum Points: {MIN_POINTS}")
     print("="*60)
     
-    send_telegram(f"✅ <b>ApuCash Notifier Started!</b>\n\n🎯 {MIN_POINTS}+ points only\n⏱ Checking every 60 seconds")
+    # স্টার্ট মেসেজ
+    send_telegram(f"✅ <b>ApuCash Notifier Restarted!</b>\n\n🎯 {MIN_POINTS}+ points only\n⏱ Checking every {CHECK_INTERVAL} seconds")
     
+    # সিন ফাইল লোড
     seen_offers = set()
     if os.path.exists(SEEN_FILE):
         try:
@@ -218,31 +213,50 @@ def main():
         except:
             pass
     
+    error_count = 0
+    
     while True:
         try:
             offers = scrape_apucash()
             
-            for offer in offers:
-                if offer['key'] not in seen_offers:
-                    seen_offers.add(offer['key'])
-                    
-                    msg = (
-                        f"🟢 <b>New ApuCash Activity!</b>\n\n"
-                        f"👤 <b>User:</b> {offer['username']}\n"
-                        f"💰 <b>Points:</b> {offer['points']}\n"
-                        f"⏱ <b>Time:</b> {offer['time']}"
-                    )
-                    
-                    if send_telegram(msg):
-                        print(f"📨 Sent: {offer['username']} - {offer['points']}")
-                    
-                    with open(SEEN_FILE, "w") as f:
-                        json.dump(list(seen_offers), f)
-                    
-                    time.sleep(1)
-            
-            if len(offers) == 0:
-                print("📭 No new offers")
+            if offers:
+                error_count = 0
+                new_count = 0
+                
+                for offer in offers:
+                    if offer['key'] not in seen_offers:
+                        seen_offers.add(offer['key'])
+                        new_count += 1
+                        
+                        msg = (
+                            f"🟢 <b>New ApuCash Activity! ({MIN_POINTS}+ points)</b>\n\n"
+                            f"👤 <b>User:</b> {offer['username']}\n"
+                            f"💰 <b>Points:</b> {offer['points']}\n"
+                            f"📋 <b>Offer:</b> {offer.get('offer_name', 'Unknown')}\n"
+                            f"⏱ <b>Time:</b> {offer['time']}"
+                        )
+                        
+                        if send_telegram(msg):
+                            print(f"📨 Sent: {offer['username']} - {offer['points']}")
+                        else:
+                            print(f"❌ Failed to send: {offer['username']}")
+                        
+                        # সিন ফাইল সেভ
+                        with open(SEEN_FILE, "w") as f:
+                            json.dump(list(seen_offers), f)
+                        
+                        time.sleep(1)
+                
+                if new_count > 0:
+                    print(f"✨ {new_count} new offers sent!")
+                else:
+                    print("📭 No new offers (all already seen)")
+            else:
+                error_count += 1
+                print(f"📭 No offers found ({error_count})")
+                if error_count > 10:
+                    print("⚠️ Multiple empty responses - checking connection...")
+                    error_count = 0
             
         except Exception as e:
             print(f"❌ Loop error: {e}")
