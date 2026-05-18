@@ -10,7 +10,7 @@ from datetime import datetime
 # ================== কনফিগারেশন ==================
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
 CHAT_ID = os.environ.get("CHAT_ID")
-MIN_POINTS = 400
+MIN_POINTS = 4
 
 # টোকেন চেক
 if not BOT_TOKEN or not CHAT_ID:
