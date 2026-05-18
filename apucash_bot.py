@@ -8,9 +8,9 @@ import json
 from datetime import datetime
 
 # ================== কনফিগারেশন ==================
-BOT_TOKEN = "8760185059:AAElry-u0BYW6ZLiejygJ1UYHcPGMy_vq9s"
+BOT_TOKEN = "8617551433:AAFK1waCKiLv72SErBuf4iK0sduSahJONZo"
 CHAT_ID = "6881373105"
-MIN_POINTS = 40  # 40+ পয়েন্টস
+MIN_POINTS = 100  # 100+ পয়েন্টস
 
 APUCASH_URL = "https://apucash.com"
 SEEN_FILE = "apucash_seen.json"
