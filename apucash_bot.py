@@ -10,7 +10,7 @@ from datetime import datetime
 # ================== কনফিগারেশন ==================
 BOT_TOKEN = "8760185059:AAElry-u0BYW6ZLiejygJ1UYHcPGMy_vq9s"
 CHAT_ID = "6881373105"
-MIN_POINTS = 4  # শুধু ৪+ পয়েন্ট দেখাবে
+MIN_POINTS = 400  # শুধু ৪+ পয়েন্ট দেখাবে
 
 APUCASH_URL = "https://apucash.com"
 SEEN_FILE = "apucash_seen.json"
