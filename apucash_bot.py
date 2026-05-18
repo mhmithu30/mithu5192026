@@ -8,19 +8,28 @@ import json
 from datetime import datetime
 
 # ================== কনফিগারেশন ==================
-BOT_TOKEN = os.environ.get("BOT_TOKEN", "8760185059:AAElry-u0BYW6ZLiejygJ1UYHcPGMy_vq9s")
-CHAT_ID = os.environ.get("CHAT_ID", "6881373105")
-MIN_POINTS = 400  # শুধু ৪০০+ পয়েন্ট দেখাবে
+BOT_TOKEN = os.environ.get("BOT_TOKEN")
+CHAT_ID = os.environ.get("CHAT_ID")
+MIN_POINTS = 400
+
+# টোকেন চেক
+if not BOT_TOKEN or not CHAT_ID:
+    print("❌ ERROR: BOT_TOKEN and CHAT_ID must be set in environment variables!")
+    print("   Please add them in Railway -> Variables tab")
+    exit(1)
 
 APUCASH_URL = "https://apucash.com"
 SEEN_FILE = "apucash_seen.json"
-CHECK_INTERVAL = 60  # 60 সেকেন্ড পর পর চেক করবে
+CHECK_INTERVAL = 60
 
 # ================== ফাংশন ==================
 def load_seen():
     if os.path.exists(SEEN_FILE):
-        with open(SEEN_FILE, "r") as f:
-            return set(json.load(f))
+        try:
+            with open(SEEN_FILE, "r") as f:
+                return set(json.load(f))
+        except:
+            return set()
     return set()
 
 def save_seen(seen):
@@ -32,9 +41,10 @@ def send_telegram(message):
     data = {"chat_id": CHAT_ID, "text": message, "parse_mode": "HTML"}
     try:
         r = requests.post(url, data=data, timeout=10)
+        print(f"📨 Telegram status: {r.status_code}")
         return r.status_code == 200
     except Exception as e:
-        print(f"Telegram Error: {e}")
+        print(f"❌ Telegram error: {e}")
         return False
 
 def scrape_apucash():
@@ -46,7 +56,9 @@ def scrape_apucash():
     
     try:
         res = requests.get(APUCASH_URL, headers=headers, timeout=15)
+        
         if res.status_code != 200:
+            print(f"⚠️ HTTP {res.status_code}")
             return []
 
         text = res.text
@@ -67,47 +79,61 @@ def scrape_apucash():
                     "key": unique_key,
                     "time": datetime.now().strftime("%H:%M:%S")
                 })
-                print(f"  Found: {username} - {points_val} points")
+                print(f"  ✅ Found: {username} - {points_val} points")
         
         # ডুপ্লিকেট রিমুভ
         unique_offers = {offer['key']: offer for offer in offers}.values()
         return list(unique_offers)
         
     except Exception as e:
-        print(f"Error: {e}")
+        print(f"❌ Error scraping ApuCash: {e}")
         return []
 
 def main():
     print("="*50)
-    print("🤖 ApuCash Live Offer Notifier Started")
+    print("🤖 ApuCash Live Offer Notifier")
     print(f"💰 Minimum Points: {MIN_POINTS}")
     print("="*50)
     
+    # টেস্ট মেসেজ
     send_telegram(
         f"✅ <b>ApuCash Notifier চালু হয়েছে!</b>\n\n"
         f"🎯 শুধু <b>{MIN_POINTS}+ পয়েন্টস</b> দেখাবে\n"
-        f"⏱ চেক ইন্টারভাল: {CHECK_INTERVAL} সেকেন্ড"
+        f"⏱ চেক ইন্টারভাল: {CHECK_INTERVAL} সেকেন্ড\n\n"
+        f"🚀 বট চালু আছে এবং কাজ করছে!"
     )
     
     seen = load_seen()
+    print(f"📚 Loaded {len(seen)} seen offers")
     
     while True:
-        offers = scrape_apucash()
+        try:
+            offers = scrape_apucash()
+            new_count = 0
+            
+            for offer in offers:
+                if offer['key'] not in seen:
+                    seen.add(offer['key'])
+                    new_count += 1
+                    msg = (
+                        f"🟢 <b>ApuCash High Value Activity!</b>\n\n"
+                        f"👤 <b>User:</b> {offer['username']}\n"
+                        f"💰 <b>Points:</b> {offer['points']}\n"
+                        f"⏱ <b>Time:</b> {offer['time']}"
+                    )
+                    if send_telegram(msg):
+                        print(f"📨 Sent: {offer['username']} - {offer['points']}")
+                    time.sleep(1)
+            
+            if new_count > 0:
+                print(f"✨ {new_count} new offers found and sent!")
+                save_seen(seen)
+            else:
+                print("📭 No new offers")
+                
+        except Exception as e:
+            print(f"❌ Main loop error: {e}")
         
-        for offer in offers:
-            if offer['key'] not in seen:
-                seen.add(offer['key'])
-                msg = (
-                    f"🟢 <b>ApuCash High Value Activity!</b>\n\n"
-                    f"👤 <b>User:</b> {offer['username']}\n"
-                    f"💰 <b>Points:</b> {offer['points']}\n"
-                    f"⏱ <b>Time:</b> {offer['time']}"
-                )
-                if send_telegram(msg):
-                    print(f"📨 Sent: {offer['username']} - {offer['points']}")
-                time.sleep(1)
-        
-        save_seen(seen)
         time.sleep(CHECK_INTERVAL)
 
 if __name__ == "__main__":
