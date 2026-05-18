@@ -1,209 +1,227 @@
-import requests
-from bs4 import BeautifulSoup
 import time
+import json
+import os
 import re
 import hashlib
-import os
-import json
 from datetime import datetime
-import random
+from selenium import webdriver
+from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+import requests
 
 # ================== কনফিগারেশন ==================
-BOT_TOKEN = os.environ.get("BOT_TOKEN", "8617551433:AAFK1waCKiLv72SErBuf4iK0sduSahJONZo")
-CHAT_ID = os.environ.get("CHAT_ID", "6881373105")
-MIN_POINTS = 400
+BOT_TOKEN = "8760185059:AAElry-u0BYW6ZLiejygJ1UYHcPGMy_vq9s"
+CHAT_ID = "6881373105"
+MIN_POINTS = 4
 
 APUCASH_URL = "https://apucash.com"
 SEEN_FILE = "apucash_seen.json"
 CHECK_INTERVAL = 60
 
 def send_telegram(message):
+    """টেলিগ্রামে মেসেজ পাঠান"""
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
     data = {"chat_id": CHAT_ID, "text": message, "parse_mode": "HTML"}
     try:
         r = requests.post(url, data=data, timeout=10)
         if r.status_code == 200:
-            print(f"✅ Telegram sent")
-        return r.status_code == 200
+            print("✅ Telegram sent")
+            return True
+        else:
+            print(f"❌ Telegram error: {r.status_code}")
+            return False
     except Exception as e:
-        print(f"❌ Telegram error: {e}")
+        print(f"❌ Telegram exception: {e}")
         return False
 
-def scrape_apucash():
-    """ApuCash থেকে সঠিক ডাটা সংগ্রহ"""
-    print(f"[{datetime.now().strftime('%H:%M:%S')}] 🔍 Checking ApuCash...")
-    
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36",
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-        "Accept-Language": "en-US,en;q=0.9",
-        "Cache-Control": "no-cache",
-    }
+def create_driver():
+    """Selenium WebDriver তৈরি করুন"""
+    chrome_options = Options()
+    chrome_options.add_argument("--headless")  # হেডলেস মোড
+    chrome_options.add_argument("--no-sandbox")
+    chrome_options.add_argument("--disable-dev-shm-usage")
+    chrome_options.add_argument("--disable-gpu")
+    chrome_options.add_argument("--window-size=1920,1080")
+    chrome_options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36")
     
     try:
-        response = requests.get(APUCASH_URL, headers=headers, timeout=30)
+        driver = webdriver.Chrome(options=chrome_options)
+        return driver
+    except Exception as e:
+        print(f"❌ Driver error: {e}")
+        return None
+
+def scrape_apucash():
+    """Selenium দিয়ে ApuCash থেকে ডাটা সংগ্রহ"""
+    print(f"[{datetime.now().strftime('%H:%M:%S')}] 🔍 Checking ApuCash...")
+    
+    driver = create_driver()
+    if not driver:
+        return []
+    
+    try:
+        # ওয়েবসাইট ওপেন করুন
+        driver.get(APUCASH_URL)
         
-        if response.status_code != 200:
-            print(f"⚠️ HTTP {response.status_code}")
-            return []
+        # পেজ লোড হওয়ার জন্য অপেক্ষা
+        WebDriverWait(driver, 10).until(
+            EC.presence_of_element_located((By.TAG_NAME, "body"))
+        )
         
-        soup = BeautifulSoup(response.text, "html.parser")
+        # স্ক্রোল করে আরও কন্টেন্ট লোড করুন
+        driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+        time.sleep(2)
+        
+        # পেজের সোর্স পান
+        page_source = driver.page_source
+        
         offers = []
         
-        # ডিবাগ: HTML এর অংশ দেখি
-        print("  Debug: Looking for activity patterns...")
-        
-        # পদ্ধতি 1: JSON-LD স্ক্রিপ্ট খোঁজা (সবচেয়ে নির্ভরযোগ্য)
-        scripts = soup.find_all("script", type="application/ld+json")
-        for script in scripts:
-            try:
-                import json as json_module
-                data = json_module.loads(script.string)
-                if isinstance(data, dict):
-                    # এখানে ডাটা পার্স করুন
-                    pass
-            except:
-                pass
-        
-        # পদ্ধতি 2: meta ট্যাগ থেকে
-        meta_tags = soup.find_all("meta")
-        for meta in meta_tags:
-            if meta.get("property") and "activity" in meta.get("property", "").lower():
-                print(f"  Meta found: {meta}")
-        
-        # পদ্ধতি 3: সব div এর inner text বিশ্লেষণ
-        all_divs = soup.find_all("div")
-        
-        for div in all_divs:
-            div_html = str(div)
-            div_text = div.get_text()
-            
-            # শুধু মিনিমাম লেন্থের div বিবেচনা করুন
-            if len(div_text) < 20 or len(div_text) > 500:
-                continue
-            
-            # পয়েন্টস প্যাটার্ন (একাধিক ফরম্যাট)
-            points_patterns = [
-                r'(\d+(?:\.\d+)?)\s*(?:points?|pts?|coins?|credits?)',
-                r'[\$€£](\d+(?:\.\d+)?)',
-                r'reward[:\s]+(\d+)',
-                r'earned\s+(\d+)',
+        # সব activity এলিমেন্ট খোঁজা
+        try:
+            # বিভিন্ন সেলেক্টর চেষ্টা
+            selectors = [
+                "div.activity-item",
+                "div.feed-item", 
+                "div.earning-item",
+                "div[class*='activity']",
+                "div[class*='feed']",
+                "div[class*='earning']",
+                "div.offer-item"
             ]
             
-            points_val = 0
-            points_str = None
-            
-            for pattern in points_patterns:
-                match = re.search(pattern, div_text, re.I)
-                if match:
-                    points_val = float(match.group(1))
-                    points_str = match.group(0)
+            elements = []
+            for selector in selectors:
+                elements = driver.find_elements(By.CSS_SELECTOR, selector)
+                if elements:
+                    print(f"  Found {len(elements)} elements with selector: {selector}")
                     break
             
-            if points_val >= MIN_POINTS:
-                # ইউজারনেম প্যাটার্ন (একাধিক ফরম্যাট)
-                username_patterns = [
-                    r'@([A-Za-z0-9_]{3,25})',
-                    r'user[:\s]+([A-Za-z0-9_]{3,25})',
-                    r'username[:\s]+([A-Za-z0-9_]{3,25})',
-                    r'by\s+([A-Za-z][A-Za-z0-9_]{2,20})',
-                    r'([A-Za-z][A-Za-z0-9_]{2,20})\s+(?:completed|earned|got)',
-                    r'([A-Za-z][A-Za-z0-9_]{3,20})',
-                ]
-                
-                username = None
-                for pattern in username_patterns:
-                    match = re.search(pattern, div_text, re.I)
-                    if match:
-                        potential_name = match.group(1)
-                        # চেক করুন এটি শুধু নম্বর কিনা
-                        if not potential_name.isdigit() and len(potential_name) > 2:
-                            username = potential_name
-                            break
-                
-                if username and points_val >= MIN_POINTS:
-                    # অফার নেম খোঁজার চেষ্টা
-                    offer_name = "Unknown Offer"
-                    offer_patterns = [
-                        r'(?:completed|finished)\s+([A-Za-z\s]{5,50})',
-                        r'offer[:\s]+([A-Za-z\s]{5,50})',
+            if not elements:
+                # সব div চেক করুন
+                elements = driver.find_elements(By.TAG_NAME, "div")
+                print(f"  Checking {len(elements)} div elements...")
+            
+            for element in elements:
+                try:
+                    element_text = element.text
+                    
+                    if len(element_text) < 30:
+                        continue
+                    
+                    # পয়েন্টস খোঁজা
+                    points_patterns = [
+                        r'(\d{3,})\s*(?:points?|pts?|coins?)',
+                        r'[\$](\d{2,}(?:\.\d+)?)',
+                        r'(\d+)\s*points',
+                        r'reward[:\s]+(\d+)',
                     ]
-                    for pattern in offer_patterns:
-                        match = re.search(pattern, div_text, re.I)
+                    
+                    points_val = 0
+                    for pattern in points_patterns:
+                        match = re.search(pattern, element_text, re.I)
                         if match:
-                            offer_name = match.group(1).strip()[:40]
+                            raw_points = match.group(1)
+                            if '.' in raw_points:
+                                points_val = float(raw_points)
+                            else:
+                                points_val = int(raw_points)
                             break
                     
-                    unique_key = hashlib.md5(f"{username}_{points_val}_{offer_name}".encode()).hexdigest()
+                    if points_val >= MIN_POINTS:
+                        # ইউজারনেম খোঁজা
+                        username_patterns = [
+                            r'@([A-Za-z][A-Za-z0-9_]{2,20})',
+                            r'([A-Za-z][A-Za-z0-9_]{3,20})\s+(?:earned|got|completed)',
+                            r'(?:user|username)[:\s]+([A-Za-z][A-Za-z0-9_]{2,20})',
+                            r'by\s+([A-Za-z][A-Za-z0-9_]{2,20})',
+                            r'([A-Za-z][A-Za-z0-9_]{4,20})',
+                        ]
+                        
+                        username = None
+                        for pattern in username_patterns:
+                            match = re.search(pattern, element_text, re.I)
+                            if match:
+                                potential = match.group(1)
+                                if not potential.isdigit() and len(potential) > 2:
+                                    username = potential
+                                    break
+                        
+                        if username and points_val >= MIN_POINTS:
+                            unique_key = hashlib.md5(f"{username}_{points_val}".encode()).hexdigest()
+                            
+                            offers.append({
+                                "username": username[:30],
+                                "points": f"{int(points_val)} points",
+                                "points_val": points_val,
+                                "key": unique_key,
+                                "time": datetime.now().strftime("%I:%M %p"),
+                                "details": element_text[:100]
+                            })
+                            print(f"  ✅ {username} - {int(points_val)} points")
+                            
+                except Exception as e:
+                    continue
                     
-                    offers.append({
-                        "username": username,
-                        "points": f"{int(points_val)} points",
-                        "points_val": points_val,
-                        "offer_name": offer_name,
-                        "key": unique_key,
-                        "time": datetime.now().strftime("%I:%M %p")
-                    })
-                    print(f"  ✅ {username} - {int(points_val)} points - {offer_name[:20]}")
+        except Exception as e:
+            print(f"  Element parsing error: {e}")
         
-        # পদ্ধতি 4: API endpoint (যদি থাকে)
-        api_endpoints = [
-            "https://apucash.com/api/activities",
-            "https://apucash.com/api/earnings",
-            "https://apucash.com/feed.json",
-        ]
+        # যদি কিছু না পাওয়া যায়, পুরো পেজ টেক্সট থেকে Regex দিয়ে খোঁজা
+        if not offers:
+            print("  Trying full page regex...")
+            text = page_source
+            
+            patterns = [
+                r'@([A-Za-z][A-Za-z0-9_]{2,20}).*?(\d{3,})\s*(?:points?|coins?)',
+                r'([A-Za-z][A-Za-z0-9_]{3,20})\s+(?:earned|got|received)\s+(\d{3,})',
+            ]
+            
+            for pattern in patterns:
+                matches = re.findall(pattern, text, re.I)
+                for username, points in matches:
+                    points_val = int(points)
+                    if points_val >= MIN_POINTS and len(username) > 2:
+                        unique_key = hashlib.md5(f"{username}_{points_val}".encode()).hexdigest()
+                        
+                        if not any(o['key'] == unique_key for o in offers):
+                            offers.append({
+                                "username": username[:30],
+                                "points": f"{points_val} points",
+                                "points_val": points_val,
+                                "key": unique_key,
+                                "time": datetime.now().strftime("%I:%M %p"),
+                                "details": ""
+                            })
+                            print(f"  ✅ Regex: {username} - {points_val} points")
         
-        for api_url in api_endpoints:
-            try:
-                api_response = requests.get(api_url, headers=headers, timeout=10)
-                if api_response.status_code == 200:
-                    try:
-                        api_data = api_response.json()
-                        if isinstance(api_data, list):
-                            for item in api_data:
-                                username = item.get("user", {}).get("username", item.get("username"))
-                                points_val = item.get("points", item.get("reward", 0))
-                                if username and points_val >= MIN_POINTS:
-                                    unique_key = hashlib.md5(f"{username}_{points_val}".encode()).hexdigest()
-                                    offers.append({
-                                        "username": username,
-                                        "points": f"{points_val} points",
-                                        "points_val": points_val,
-                                        "offer_name": item.get("offer", "Unknown"),
-                                        "key": unique_key,
-                                        "time": datetime.now().strftime("%I:%M %p")
-                                    })
-                                    print(f"  ✅ API: {username} - {points_val} points")
-                    except:
-                        pass
-            except:
-                pass
-        
-        # ডুপ্লিকেট রিমুভ
-        unique_offers = []
-        seen_keys = set()
-        for offer in offers:
-            if offer['key'] not in seen_keys:
-                seen_keys.add(offer['key'])
-                unique_offers.append(offer)
-        
-        print(f"📊 Total offers found: {len(unique_offers)}")
-        return unique_offers
+        driver.quit()
+        print(f"📊 Total offers: {len(offers)}")
+        return offers
         
     except Exception as e:
         print(f"❌ Scraping error: {e}")
+        if driver:
+            driver.quit()
         return []
 
 def main():
     print("="*60)
-    print("🤖 ApuCash Live Offer Notifier (Updated)")
-    print(f"💰 Minimum Points: {MIN_POINTS}")
+    print("🤖 ApuCash Live Offer Notifier (Selenium Version)")
+    print(f"💰 Minimum Points: {MIN_POINTS}+")
+    print(f"⏱ Check Interval: {CHECK_INTERVAL} seconds")
     print("="*60)
     
-    # স্টার্ট মেসেজ
-    send_telegram(f"✅ <b>ApuCash Notifier Restarted!</b>\n\n🎯 {MIN_POINTS}+ points only\n⏱ Checking every {CHECK_INTERVAL} seconds")
+    # স্টার্ট নোটিফিকেশন
+    send_telegram(
+        f"✅ <b>ApuCash Notifier Started!</b>\n\n"
+        f"🎯 {MIN_POINTS}+ points only\n"
+        f"⏱ Checking every {CHECK_INTERVAL} seconds\n"
+        f"🔄 Using Selenium (dynamic content)"
+    )
     
-    # সিন ফাইল লোড
+    # সিন অফার লোড
     seen_offers = set()
     if os.path.exists(SEEN_FILE):
         try:
@@ -213,53 +231,35 @@ def main():
         except:
             pass
     
-    error_count = 0
-    
     while True:
         try:
             offers = scrape_apucash()
             
-            if offers:
-                error_count = 0
-                new_count = 0
-                
-                for offer in offers:
-                    if offer['key'] not in seen_offers:
-                        seen_offers.add(offer['key'])
-                        new_count += 1
-                        
-                        msg = (
-                            f"🟢 <b>New ApuCash Activity! ({MIN_POINTS}+ points)</b>\n\n"
-                            f"👤 <b>User:</b> {offer['username']}\n"
-                            f"💰 <b>Points:</b> {offer['points']}\n"
-                            f"📋 <b>Offer:</b> {offer.get('offer_name', 'Unknown')}\n"
-                            f"⏱ <b>Time:</b> {offer['time']}"
-                        )
-                        
-                        if send_telegram(msg):
-                            print(f"📨 Sent: {offer['username']} - {offer['points']}")
-                        else:
-                            print(f"❌ Failed to send: {offer['username']}")
-                        
-                        # সিন ফাইল সেভ
-                        with open(SEEN_FILE, "w") as f:
-                            json.dump(list(seen_offers), f)
-                        
-                        time.sleep(1)
-                
-                if new_count > 0:
-                    print(f"✨ {new_count} new offers sent!")
-                else:
-                    print("📭 No new offers (all already seen)")
-            else:
-                error_count += 1
-                print(f"📭 No offers found ({error_count})")
-                if error_count > 10:
-                    print("⚠️ Multiple empty responses - checking connection...")
-                    error_count = 0
+            for offer in offers:
+                if offer['key'] not in seen_offers:
+                    seen_offers.add(offer['key'])
+                    
+                    msg = (
+                        f"🟢 <b>New ApuCash Activity!</b>\n\n"
+                        f"👤 <b>User:</b> {offer['username']}\n"
+                        f"💰 <b>Points:</b> {offer['points']}\n"
+                        f"⏱ <b>Time:</b> {offer['time']}"
+                    )
+                    
+                    if send_telegram(msg):
+                        print(f"📨 Sent: {offer['username']} - {offer['points']}")
+                    
+                    # সিন ফাইল সেভ
+                    with open(SEEN_FILE, "w") as f:
+                        json.dump(list(seen_offers), f)
+                    
+                    time.sleep(1)
+            
+            if len(offers) == 0:
+                print("📭 No new offers")
             
         except Exception as e:
-            print(f"❌ Loop error: {e}")
+            print(f"❌ Main loop error: {e}")
         
         time.sleep(CHECK_INTERVAL)
 
