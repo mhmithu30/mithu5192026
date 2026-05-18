@@ -8,9 +8,9 @@ import json
 from datetime import datetime
 
 # ================== কনফিগারেশন ==================
-BOT_TOKEN = "8760185059:AAElry-u0BYW6ZLiejygJ1UYHcPGMy_vq9s"
+BOT_TOKEN = "8617551433:AAFK1waCKiLv72SErBuf4iK0sduSahJONZo"
 CHAT_ID = "6881373105"
-MIN_POINTS = 40
+MIN_POINTS = 40  # 40+ পয়েন্টস
 
 APUCASH_URL = "https://apucash.com"
 SEEN_FILE = "apucash_seen.json"
@@ -32,14 +32,13 @@ def send_telegram(message):
         return False
 
 def scrape_apucash():
-    """ApuCash থেকে সঠিক ডাটা সংগ্রহ - HTML স্ট্রাকচার অনুযায়ী"""
+    """ApuCash থেকে সঠিক ডাটা সংগ্রহ - সঠিক ইউজারনেম সহ"""
     print(f"[{datetime.now().strftime('%H:%M:%S')}] 🔍 Checking ApuCash...")
     
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36",
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
         "Accept-Language": "en-US,en;q=0.9",
-        "Cache-Control": "no-cache",
     }
     
     try:
@@ -52,82 +51,57 @@ def scrape_apucash():
         soup = BeautifulSoup(response.text, "html.parser")
         offers = []
         
-        # পদ্ধতি 1: top-offer-wrapper ক্লাস (HTML এ যা দেখছি)
+        # top-offer-wrapper ক্লাস থেকে ডাটা নেওয়া
         offer_wrappers = soup.find_all("div", class_="top-offer-wrapper")
         
         for wrapper in offer_wrappers:
             try:
-                # ইউজারনেম খোঁজা - h6 ট্যাগে থাকে
-                username_elem = wrapper.find("h6")
-                username = username_elem.get_text(strip=True) if username_elem else None
+                # ========== সঠিক ইউজারনেম (hd ক্লাস থেকে) ==========
+                username = None
+                hd_elem = wrapper.find("p", class_="hd")
+                if hd_elem:
+                    username = hd_elem.get_text(strip=True)
                 
-                # ইউজারনেমের বিকল্প (hd ক্লাসে alt থাকে)
+                # যদি hd না পাওয়া যায়, তাহলে alt এট্রিবিউট থেকে নেওয়া
                 if not username:
-                    hd_elem = wrapper.find("p", class_="hd")
-                    if hd_elem:
-                        username = hd_elem.get_text(strip=True)
+                    img_elem = wrapper.find("img")
+                    if img_elem and img_elem.get('alt'):
+                        username = img_elem.get('alt')
                 
-                # পয়েন্টস খোঁজা - offer-amount এ থাকে
+                # Offerwall নাম (এটি শুধু তথ্যের জন্য রাখা হয়েছে)
+                offerwall = None
+                offerwall_elem = wrapper.find("h6")
+                if offerwall_elem:
+                    offerwall = offerwall_elem.get_text(strip=True)
+                
+                # পয়েন্টস
                 amount_elem = wrapper.find("div", class_="offer-amount")
+                points_val = 0
+                
                 if amount_elem:
                     points_text = amount_elem.get_text(strip=True)
-                    # পয়েন্টস বের করা (যেমন: "1,200💰" বা "41💰")
+                    # পয়েন্টস বের করা (যেমন: "1,250🎁" বা "5,000🎁")
                     points_match = re.search(r'([\d,]+)', points_text)
                     if points_match:
                         points_str = points_match.group(1).replace(',', '')
                         points_val = float(points_str)
-                        
-                        if points_val >= MIN_POINTS and username:
-                            unique_key = hashlib.md5(f"{username}_{points_val}".encode()).hexdigest()
-                            
-                            offers.append({
-                                "username": username[:30],
-                                "points": f"{points_val} coins",
-                                "points_val": points_val,
-                                "key": unique_key,
-                                "time": datetime.now().strftime("%I:%M %p")
-                            })
-                            print(f"  ✅ {username} - {points_val} coins")
+                
+                # চেক করা
+                if points_val >= MIN_POINTS and username:
+                    unique_key = hashlib.md5(f"{username}_{points_val}".encode()).hexdigest()
+                    
+                    offers.append({
+                        "username": username[:30],           # আসল ইউজারনেম (xyl20yuh)
+                        "offerwall": offerwall[:30] if offerwall else "Unknown",  # Offerwall নাম (Adsprem)
+                        "points": f"{int(points_val)} coins",
+                        "points_val": points_val,
+                        "key": unique_key,
+                        "time": datetime.now().strftime("%I:%M %p")
+                    })
+                    print(f"  ✅ {username} ({offerwall}) - {int(points_val)} coins")
                             
             except Exception as e:
                 continue
-        
-        # পদ্ধতি 2: offer-wrapper ক্লাস (বিকল্প)
-        if not offers:
-            offer_wrappers = soup.find_all("div", class_="offer-wrapper")
-            
-            for wrapper in offer_wrappers:
-                try:
-                    # ইউজারনেম
-                    username_elem = wrapper.find("h6")
-                    username = username_elem.get_text(strip=True) if username_elem else None
-                    
-                    if not username:
-                        hd_elem = wrapper.find("p", class_="hd")
-                        if hd_elem:
-                            username = hd_elem.get_text(strip=True)
-                    
-                    # পয়েন্টস
-                    amount_elem = wrapper.find("div", class_="offer-amount")
-                    if amount_elem:
-                        points_text = amount_elem.get_text(strip=True)
-                        points_match = re.search(r'([\d,]+)', points_text)
-                        if points_match:
-                            points_str = points_match.group(1).replace(',', '')
-                            points_val = float(points_str)
-                            
-                            if points_val >= MIN_POINTS and username:
-                                unique_key = hashlib.md5(f"{username}_{points_val}".encode()).hexdigest()
-                                offers.append({
-                                    "username": username[:30],
-                                    "points": f"{points_val} coins",
-                                    "points_val": points_val,
-                                    "key": unique_key,
-                                    "time": datetime.now().strftime("%I:%M %p")
-                                })
-                                print(f"  ✅ {username} - {points_val} coins")
-                except:
-                    continue
         
         # ডুপ্লিকেট রিমুভ
         unique_offers = []
@@ -146,7 +120,7 @@ def scrape_apucash():
 
 def main():
     print("="*60)
-    print("🤖 ApuCash Live Offer Notifier (Fixed)")
+    print("🤖 ApuCash Live Offer Notifier (Fixed - Real Username)")
     print(f"💰 Minimum Points: {MIN_POINTS}+ coins")
     print(f"⏱ Check Interval: {CHECK_INTERVAL} seconds")
     print("="*60)
@@ -155,8 +129,8 @@ def main():
     send_telegram(
         f"✅ <b>ApuCash Notifier চালু হয়েছে!</b>\n\n"
         f"🎯 শুধু <b>{MIN_POINTS}+ coins</b> দেখাবে\n"
-        f"⏱ চেক ইন্টারভাল: {CHECK_INTERVAL} সেকেন্ড\n\n"
-        f"🔍 মনিটরিং চলছে..."
+        f"👤 আসল ইউজারনেম দেখাবে (xyl20yuh, heleelt ইত্যাদি)\n"
+        f"⏱ চেক ইন্টারভাল: {CHECK_INTERVAL} সেকেন্ড"
     )
     
     # সিন ফাইল লোড
@@ -179,15 +153,17 @@ def main():
                     seen_offers.add(offer['key'])
                     new_count += 1
                     
+                    # মেসেজ তৈরি - Offerwall নামসহ
                     msg = (
                         f"🟢 <b>New ApuCash Activity!</b>\n\n"
                         f"👤 <b>User:</b> {offer['username']}\n"
+                        f"🏢 <b>Offerwall:</b> {offer['offerwall']}\n"
                         f"💰 <b>Points:</b> {offer['points']}\n"
                         f"⏱ <b>Time:</b> {offer['time']}"
                     )
                     
                     if send_telegram(msg):
-                        print(f"📨 Sent: {offer['username']} - {offer['points']}")
+                        print(f"📨 Sent: {offer['username']} - {offer['points']} ({offer['offerwall']})")
                     else:
                         print(f"❌ Failed to send: {offer['username']}")
                     
